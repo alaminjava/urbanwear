@@ -276,7 +276,9 @@ function App() {
     storeService.updateWishlist(productIds, session.token).catch(() => undefined);
   }, [wishlist, session?.token]);
 
-  const addToCart = (product, quantity = 1, selection = {}) => {
+  const addToCart = (product, quantity = 1, selection = {}, options = {}) => {
+    const shouldPreserveScroll = options.preserveScroll !== false;
+    const scrollPosition = typeof window !== "undefined" ? { x: window.scrollX, y: window.scrollY } : null;
     const variant = normalizeVariantSelection(product, selection);
     const cartKey = cartKeyFor(product, variant);
     setCart((current) => {
@@ -301,6 +303,12 @@ function App() {
         },
       ];
     });
+
+    if (shouldPreserveScroll && scrollPosition && typeof window !== "undefined") {
+      const restoreScroll = () => window.scrollTo({ left: scrollPosition.x, top: scrollPosition.y, behavior: "auto" });
+      if (typeof window.requestAnimationFrame === "function") window.requestAnimationFrame(restoreScroll);
+      window.setTimeout(restoreScroll, 0);
+    }
   };
 
   const updateCartQuantity = (cartKey, quantity) => {
@@ -338,6 +346,7 @@ function App() {
 
   return (
     <BrowserRouter>
+      <ScrollToTop />
       <StoreShell session={session} cart={cart} wishlist={wishlist} onLogout={logout}>
         <Routes>
           <Route path="/" element={<Home addToCart={addToCart} wishlist={wishlist} toggleWishlist={toggleWishlist} />} />
@@ -360,6 +369,17 @@ function App() {
       </StoreShell>
     </BrowserRouter>
   );
+}
+
+function ScrollToTop() {
+  const { pathname, search } = useLocation();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [pathname, search]);
+
+  return null;
 }
 
 function StoreShell({ session, cart, wishlist, onLogout, children }) {
@@ -935,6 +955,7 @@ function Products({ addToCart, wishlist, toggleWishlist }) {
   const heroAction = category
     ? { label: "All products", to: "/products" }
     : { label: "View men", to: "/products?category=Men" };
+  const sliderProducts = products.slice(0, 8);
 
   useEffect(() => {
     setLoading(true);
@@ -966,6 +987,7 @@ function Products({ addToCart, wishlist, toggleWishlist }) {
         </div>
         <Link className="secondary-btn" to={heroAction.to}>{heroAction.label}</Link>
       </div>
+      <MobileProductSlider products={sliderProducts} />
       <div className="filters shop-filter-bar">
         <input value={search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Search products, tags, categories..." />
         <select value={category} onChange={(event) => updateFilter("category", event.target.value)}>
@@ -997,8 +1019,40 @@ function Products({ addToCart, wishlist, toggleWishlist }) {
   );
 }
 
+function MobileProductSlider({ products = [] }) {
+  const slides = products.length ? products : [
+    { name: "Relaxed Cargo Trouser", category: "Men", price: 64, slug: "", images: ["https://images.unsplash.com/photo-1556821840-3a63f95609a7?auto=format&fit=crop&w=900&q=80"] },
+    { name: "Lightweight Harrington", category: "Women", price: 86, slug: "", images: ["https://images.unsplash.com/photo-1529139574466-a303027c1d8b?auto=format&fit=crop&w=900&q=80"] },
+    { name: "Pique Resort Polo", category: "Men", price: 42, slug: "", images: ["https://images.unsplash.com/photo-1617137968427-85924c800a22?auto=format&fit=crop&w=900&q=80"] },
+  ];
+
+  return (
+    <section className="mobile-product-slider" aria-label="Featured products slider">
+      <div className="mobile-slider-head">
+        <span className="eyebrow">Featured picks</span>
+        <Link to="/products?sort=featured">Shop all</Link>
+      </div>
+      <div className="mobile-slider-track">
+        {slides.slice(0, 8).map((product, index) => (
+          <Link
+            key={product._id || product.sku || product.slug || `${product.name}-${index}`}
+            className="mobile-slider-card"
+            to={product.slug ? `/products/${product.slug}` : "/products"}
+          >
+            <ProductVisual image={product.images?.[0]} name={product.name} />
+            <span>{product.category || "Featured"}</span>
+            <strong>{product.name}</strong>
+            <small>{product.price ? formatMoney(product.price) : "Shop now"}</small>
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ProductDetail({ addToCart, wishlist, toggleWishlist }) {
   const { slug } = useParams();
+  const navigate = useNavigate();
   const [product, setProduct] = useState(null);
   const [quantity, setQuantity] = useState(1);
   const [selectedSize, setSelectedSize] = useState("");
@@ -1032,6 +1086,11 @@ function ProductDetail({ addToCart, wishlist, toggleWishlist }) {
   const colors = uniqueVariantValues(product, "color");
   const selectedVariant = normalizeVariantSelection(product, { size: selectedSize, color: selectedColor });
   const selectedStock = selectedVariant.stock;
+  const selectedCartOptions = { size: selectedSize, color: selectedColor, stock: selectedStock };
+  const handleBuyNow = () => {
+    addToCart(product, quantity, selectedCartOptions, { preserveScroll: false });
+    navigate("/checkout");
+  };
 
   return (
     <section className="product-detail page-section">
@@ -1058,8 +1117,9 @@ function ProductDetail({ addToCart, wishlist, toggleWishlist }) {
           <input id="quantity" type="number" min="1" max={selectedStock || 1} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />
         </div>
         <div className="detail-actions">
-          <button className="primary-btn" disabled={!selectedStock} onClick={() => addToCart(product, quantity, { size: selectedSize, color: selectedColor, stock: selectedStock })}>{selectedStock ? "Add to cart" : "Out of stock"}</button>
-          <button className="secondary-btn" onClick={() => toggleWishlist(product)}>{isWishlisted ? "Saved" : "Add to wishlist"}</button>
+          <button type="button" className="primary-btn" disabled={!selectedStock} onClick={() => addToCart(product, quantity, selectedCartOptions)}>{selectedStock ? "Add to cart" : "Out of stock"}</button>
+          <button type="button" className="primary-btn buy-now-btn" disabled={!selectedStock} onClick={handleBuyNow}>{selectedStock ? "Buy now" : "Out of stock"}</button>
+          <button type="button" className="secondary-btn" onClick={() => toggleWishlist(product)}>{isWishlisted ? "Saved" : "Add to wishlist"}</button>
         </div>
       </div>
     </section>
@@ -1085,10 +1145,15 @@ function HomeProductGrid({ products, addToCart, wishlist = [], toggleWishlist = 
 }
 
 function HomeProductCard({ product, addToCart, wishlist, toggleWishlist }) {
+  const navigate = useNavigate();
   const defaultVariant = normalizeVariantSelection(product);
   const canCart = Boolean(product._id && defaultVariant.stock);
   const wishlistId = product._id || product.sku || product.slug;
   const isWishlisted = wishlist.some((item) => item.id === wishlistId);
+  const handleBuyNow = () => {
+    addToCart(product, 1, defaultVariant, { preserveScroll: false });
+    navigate("/checkout");
+  };
   return (
     <article className="lux-product-card">
       <Link to={`/products/${product.slug}`} className="lux-product-media" aria-label={`View ${product.name}`}>
@@ -1101,18 +1166,26 @@ function HomeProductCard({ product, addToCart, wishlist, toggleWishlist }) {
           <strong>{formatMoney(product.price)}</strong>
           <button type="button" className={isWishlisted ? "active" : ""} onClick={() => toggleWishlist(product)} aria-label={`Save ${product.name}`}>Save</button>
         </div>
-        <button type="button" onClick={() => addToCart(product, 1, defaultVariant)} disabled={!canCart}>{defaultVariant.stock ? "Add to bag" : "Sold out"}</button>
+        <div className="lux-card-actions">
+          <button type="button" onClick={() => addToCart(product, 1, defaultVariant)} disabled={!canCart}>{defaultVariant.stock ? "Add to bag" : "Sold out"}</button>
+          <button type="button" className="buy-now-btn" onClick={handleBuyNow} disabled={!canCart}>{defaultVariant.stock ? "Buy now" : "Sold out"}</button>
+        </div>
       </div>
     </article>
   );
 }
 
 function ProductCard({ product, addToCart, wishlist, toggleWishlist }) {
+  const navigate = useNavigate();
   const ratingCount = 121 + Math.abs(String(product.sku || product.name).split("").reduce((sum, char) => sum + char.charCodeAt(0), 0) % 42);
   const defaultVariant = normalizeVariantSelection(product);
   const canCart = Boolean(product._id && defaultVariant.stock);
   const wishlistId = product._id || product.sku || product.slug;
   const isWishlisted = wishlist.some((item) => item.id === wishlistId);
+  const handleBuyNow = () => {
+    addToCart(product, 1, defaultVariant, { preserveScroll: false });
+    navigate("/checkout");
+  };
   return (
     <article className="product-card">
       <div className="product-media">
@@ -1137,7 +1210,10 @@ function ProductCard({ product, addToCart, wishlist, toggleWishlist }) {
         </div>
         <div className="card-bottom">
           <StockBadge product={product} />
-          <button onClick={() => addToCart(product, 1, defaultVariant)} disabled={!canCart}>{defaultVariant.stock ? "Add to Cart" : "Sold out"}</button>
+          <div className="product-card-actions">
+            <button type="button" onClick={() => addToCart(product, 1, defaultVariant)} disabled={!canCart}>{defaultVariant.stock ? "Add to Cart" : "Sold out"}</button>
+            <button type="button" className="buy-now-btn" onClick={handleBuyNow} disabled={!canCart}>{defaultVariant.stock ? "Buy now" : "Sold out"}</button>
+          </div>
         </div>
       </div>
     </article>
@@ -1192,6 +1268,11 @@ function Cart({ cart, updateCartQuantity, removeFromCart }) {
 }
 
 function Wishlist({ wishlist, addToCart, removeFromWishlist }) {
+  const navigate = useNavigate();
+  const handleBuyNow = (item) => {
+    addToCart(item, 1, normalizeVariantSelection(item), { preserveScroll: false });
+    navigate("/checkout");
+  };
   useSEO("Wishlist | UrbanWear", "Save products for later and move them into your cart when ready.");
   return (
     <section className="page-section">
@@ -1218,8 +1299,11 @@ function Wishlist({ wishlist, addToCart, removeFromWishlist }) {
                 </div>
                 <p>{item.sku} saved for later.</p>
                 <div className="card-bottom">
-                  <button onClick={() => addToCart(item, 1, normalizeVariantSelection(item))} disabled={!item.stock}>{item.stock ? "Add to Cart" : "Sold out"}</button>
-                  <button className="ghost-btn danger" onClick={() => removeFromWishlist(item.id)}>Remove</button>
+                  <div className="product-card-actions">
+                    <button type="button" onClick={() => addToCart(item, 1, normalizeVariantSelection(item))} disabled={!item.stock}>{item.stock ? "Add to Cart" : "Sold out"}</button>
+                    <button type="button" className="buy-now-btn" onClick={() => handleBuyNow(item)} disabled={!item.stock}>{item.stock ? "Buy now" : "Sold out"}</button>
+                  </div>
+                  <button type="button" className="ghost-btn danger" onClick={() => removeFromWishlist(item.id)}>Remove</button>
                 </div>
               </div>
             </article>
@@ -1242,6 +1326,40 @@ function OrderSummary({ totals, checkoutDisabled, couponCode = "" }) {
       <Link className={`primary-btn full ${checkoutDisabled ? "disabled" : ""}`} to={checkoutDisabled ? "/cart" : "/checkout"}>Checkout</Link>
       <p>{couponCode && totals.coupon ? `${couponCode.toUpperCase()} applied: ${totals.coupon.label}.` : "Try WELCOME10, SAVE25, or FREESHIP at checkout."}</p>
     </aside>
+  );
+}
+
+function CheckoutLoginPrompt({ cart = [] }) {
+  const totals = calculateOrderTotals(cart);
+  const itemCount = cart.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+
+  return (
+    <section className="checkout-lock-page page-section">
+      <div className="checkout-lock-card">
+        <div className="checkout-lock-copy">
+          <span className="eyebrow">Secure checkout</span>
+          <h1>Login required</h1>
+          <p>Guest users can browse products, but UrbanWear checkout is only available for authenticated customers.</p>
+          <div className="checkout-benefits" aria-label="Checkout benefits">
+            <span>✓ Save delivery details</span>
+            <span>✓ Track every order</span>
+            <span>✓ Secure customer checkout</span>
+          </div>
+          <div className="checkout-lock-actions">
+            <Link className="primary-btn" to="/login?redirect=/checkout">Login to checkout</Link>
+            <Link className="secondary-btn" to="/register?redirect=/checkout">Create account</Link>
+          </div>
+          <Link className="checkout-continue-link" to="/products">Continue shopping</Link>
+        </div>
+        <aside className="checkout-lock-summary" aria-label="Cart summary">
+          <span>Your bag</span>
+          <strong>{itemCount} item{itemCount === 1 ? "" : "s"}</strong>
+          <div><small>Subtotal</small><b>{formatMoney(totals.subtotal)}</b></div>
+          <div><small>Estimated delivery</small><b>{totals.deliveryFee ? formatMoney(totals.deliveryFee) : "Free"}</b></div>
+          <div className="checkout-lock-total"><small>Estimated total</small><b>{formatMoney(totals.total)}</b></div>
+        </aside>
+      </div>
+    </section>
   );
 }
 
@@ -1294,7 +1412,7 @@ function Checkout({ cart, session, clearCart }) {
   };
 
   if (!cart.length) return <section className="page-section"><EmptyState title="Cart is empty" text="Add products before checkout." action={<Link className="primary-btn" to="/products">Shop now</Link>} /></section>;
-  if (!session) return <section className="page-section"><EmptyState title="Login required" text="Guest users can browse products, but UrbanWear checkout is only available for authenticated customers." action={<Link className="primary-btn" to="/login">Login to checkout</Link>} /></section>;
+  if (!session) return <CheckoutLoginPrompt cart={cart} />;
 
   return (
     <section className="page-section two-column">
@@ -1497,6 +1615,8 @@ function Account({ session, setSession, onLogout }) {
 function AuthPage({ mode, onAuth }) {
   useSEO(mode === "login" ? "Login | UrbanWear" : "Create Account | UrbanWear", "Access your customer account or staff admin panel.");
   const navigate = useNavigate();
+  const location = useLocation();
+  const redirectTarget = new URLSearchParams(location.search).get("redirect");
   const isLogin = mode === "login";
   const [form, setForm] = useState({ name: "", email: isLogin ? "admin@store.test" : "", password: isLogin ? "test1234" : "" });
   const [error, setError] = useState("");
@@ -1510,7 +1630,8 @@ function AuthPage({ mode, onAuth }) {
     try {
       const data = isLogin ? await storeService.login(form) : await storeService.register({ ...form, role: "customer" });
       onAuth(data);
-      navigate(STAFF_ROLES.includes(data.user.role) ? "/admin" : "/");
+      const safeRedirect = redirectTarget && redirectTarget.startsWith("/") && !redirectTarget.startsWith("//") ? redirectTarget : "";
+      navigate(STAFF_ROLES.includes(data.user.role) ? "/admin" : safeRedirect || "/");
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -1520,17 +1641,46 @@ function AuthPage({ mode, onAuth }) {
 
   return (
     <section className="auth-page page-section">
-      <form className="auth-card" onSubmit={submit}>
-        <span className="eyebrow">{isLogin ? "Welcome back" : "Create account"}</span>
-        <h1>{isLogin ? "Login to your store" : "Start shopping faster"}</h1>
-        {error && <Alert message={error} />}
-        {!isLogin && <label>Name<input name="name" value={form.name} onChange={onChange} required /></label>}
-        <label>Email<input name="email" type="email" value={form.email} onChange={onChange} required /></label>
-        <label>Password<input name="password" type="password" value={form.password} onChange={onChange} required minLength="6" /></label>
-        <button className="primary-btn full" disabled={loading}>{loading ? "Please wait..." : isLogin ? "Login" : "Create account"}</button>
-        <p>{isLogin ? "Need a customer account?" : "Already have an account?"} <Link to={isLogin ? "/register" : "/login"}>{isLogin ? "Register" : "Login"}</Link></p>
-        {isLogin && <DemoAccounts />}
-      </form>
+      <div className="auth-shell">
+        <div className="auth-showcase" aria-hidden="true">
+          <span className="auth-badge">UrbanWear member access</span>
+          <h2>{isLogin ? "Welcome back to your style dashboard." : "Create your account and checkout faster."}</h2>
+          <p>Save wishlist items, track orders, manage delivery details, and access a cleaner shopping experience.</p>
+          <div className="auth-benefit-grid">
+            <span>Secure login</span>
+            <span>Fast checkout</span>
+            <span>Order tracking</span>
+          </div>
+        </div>
+
+        <form className="auth-card" onSubmit={submit}>
+          <div className="auth-card-head">
+            <span className="eyebrow">{isLogin ? "Welcome back" : "Create account"}</span>
+            <h1>{isLogin ? "Login to UrbanWear" : "Join UrbanWear"}</h1>
+            <p>{isLogin ? "Enter your details to continue shopping." : "Create a customer account in a few seconds."}</p>
+          </div>
+          {error && <Alert message={error} />}
+          <div className="auth-form-fields">
+            {!isLogin && (
+              <label>
+                <span>Name</span>
+                <input name="name" value={form.name} onChange={onChange} required placeholder="Your full name" />
+              </label>
+            )}
+            <label>
+              <span>Email</span>
+              <input name="email" type="email" value={form.email} onChange={onChange} required placeholder="you@example.com" />
+            </label>
+            <label>
+              <span>Password</span>
+              <input name="password" type="password" value={form.password} onChange={onChange} required minLength="6" placeholder="Minimum 6 characters" />
+            </label>
+          </div>
+          <button className="primary-btn full auth-submit" disabled={loading}>{loading ? "Please wait..." : isLogin ? "Login" : "Create account"}</button>
+          <p className="auth-switch">{isLogin ? "Need a customer account?" : "Already have an account?"} <Link to={`${isLogin ? "/register" : "/login"}${redirectTarget ? `?redirect=${encodeURIComponent(redirectTarget)}` : ""}`}>{isLogin ? "Register now" : "Login here"}</Link></p>
+          {isLogin && <DemoAccounts />}
+        </form>
+      </div>
     </section>
   );
 }
